@@ -1,0 +1,13 @@
+# Install into a fresh Python environment. This is NOT a fully pinned lockfile.
+# Recreate an exact lock from a successful target-runtime `pip freeze`.
+transformers>=4.37.0
+torch
+accelerate
+datasets
+numpy
+scipy
+scikit-learn
+pandas
+PyYAML
+matplotlib
+packaging
