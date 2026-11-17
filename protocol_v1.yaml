@@ -1,0 +1,69 @@
+# protocol_v1.yaml : frozen settings (matches experiment_protocol.md). Status: READY TO FREEZE (not frozen until tagged protocol-v1).
+protocol_version: protocol-v1
+status: draft_ready_to_freeze
+dataset:
+  hf_name: mandarjoshi/trivia_qa
+  config: rc.nocontext
+  split: validation
+  dedupe_by: question_id
+  pool_size: 1000          # fallback 400 decided from pilot timing only
+  pool_size_fallback: 400
+  pool_seed: 42
+  split_seed: 42
+  calibration_fraction: 0.4
+  pilot_size: 50           # first 50 of calibration part
+  min_per_class_in_test: 80
+model:
+  name: Qwen/Qwen2.5-1.5B-Instruct
+  dtype: float16
+prompt:
+  template: "Answer the following question with a short answer only (a few words, no explanation).\nQuestion: {question}\nAnswer:"
+  few_shot: none
+generation:
+  greedy: {do_sample: false, max_new_tokens: 24, repetition_penalty: 1.0}
+  sampling: {do_sample: true, num_samples: 10, temperature: 1.0, top_k: 0, top_p: 1.0, repetition_penalty: 1.0, max_new_tokens: 24, seed_base: 1000}
+scoring:
+  method: teacher_forced
+  logprob_dtype: float32
+  consistency_check: {n_questions: 5, tolerance: 0.05}   # provisional tolerance
+  tokens: [all_before_eos, answer_span]
+  aggregators: [mean_nll, sum_nll, max_nll, mean_entropy, max_entropy]
+  primary_score: all_mean_nll
+semantic_entropy:
+  nli_model: microsoft/deberta-large-mnli
+  nli_input: "{question} {answer}"
+  entailment_rule: strict_bidirectional
+  merge_identical_normalized_strings: true
+  variant_primary: discrete
+  variant_secondary: probability_weighted_optional
+label:
+  rule: normalized_exact_match_against_normalized_aliases   # verify against official TriviaQA normalization
+  sensitivity: containment
+  hand_check: {n: 30, blind_to_scores: true, min_agreement: 0.90, seed: 42}
+metrics:
+  primary: auroc          # positive class = wrong answer; higher is better
+  secondary: [auprc, ece_10bin_platt, brier_platt]
+  bootstrap: {n: 2000, seed: 2026, paired: true, ci: 0.95}
+controls: [length_only, random_seed_2026]
+cascade:
+  gate_score: all_mean_nll
+  primary_quantile: 0.5
+  risk_score: platt_calibrated_probability
+  secondary_risk_score: rank_rule
+  curve_quantiles: [0.0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]
+decision_rules:
+  rq1: {predictive_if_ci_lower_above: 0.5, h1_if_paired_ci_of_se_minus_token_excludes_zero: true}
+  rq2: {contrasts: [C1_span_vs_all_meanNLL, C2_maxNLL_vs_meanNLL, C3_meanEntropy_vs_meanNLL], ci: 0.983, min_abs_diff: 0.02}
+  rq3: {margin: 0.03, upper_ci_limit: 0.06, supported_if: "D<margin and upper95(D)<upper_ci_limit", inconclusive_if: "D<margin and upper95(D)>=upper_ci_limit", not_supported_if: "D>=margin"}
+  margin_justification: UNKNOWN_provisional
+compute:
+  gpu: UNKNOWN_assumed_colab_T4
+  cap_gpu_hours_before_fallback: 6
+  checkpoint_every_n_questions: 50
+extensions:
+  E1_length_adjusted_gate_score:
+    status: pre_registered_secondary_exploratory   # registered BEFORE any data; one contrast only; not a replacement for the primary analysis
+    run_only_if: length_only_auroc_ci_lower_above_0.5
+    adjustment: ols_of_primary_score_on_n_tokens_fitted_on_calibration_only
+    min_abs_diff: 0.02
+    ci: 0.95
